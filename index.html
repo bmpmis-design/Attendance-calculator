@@ -7,7 +7,6 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    
     body { 
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: #f5f5f5;
@@ -169,7 +168,6 @@
     }
     .btn-secondary:hover { 
       background: #ecf0f1;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
     
     .error { 
@@ -231,7 +229,7 @@
 <div class="container">
   <div class="header">
     <h1>📊 Attendance Calculator</h1>
-    <p>Upload your Excel attendance report to automatically calculate attendance from punch records</p>
+    <p>Upload your Excel attendance report - automatically calculates attendance from punch records</p>
   </div>
 
   <div class="upload-section" id="dropZone">
@@ -318,14 +316,15 @@ function processFile() {
       const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
       
       const attendanceData = parseAttendanceFromPunches(json);
-      if (attendanceData.totalDays === 0) {
-        showError('No attendance data found. Make sure your Excel has employee names and punch records.');
+      if (Object.keys(attendanceData.employees).length === 0) {
+        showError('No employee data found. Please check your Excel file format.');
       } else {
         displayResults(attendanceData);
-        showSuccess('✅ File processed successfully! ' + Object.keys(attendanceData.employees).length + ' employees found.');
+        showSuccess('✅ File processed! ' + Object.keys(attendanceData.employees).length + ' employees found.');
       }
     } catch (err) {
       showError('Error: ' + err.message);
+      console.error(err);
     }
     loading.style.display = 'none';
   };
@@ -337,77 +336,96 @@ function parseAttendanceFromPunches(rows) {
   const overallStats = { totalDays: 0, presentDays: 0, absentDays: 0, leaves: 0, weeklyOff: 0 };
   
   let currentEmployee = null;
-  let empCode = null;
-  let empName = null;
-  let inDataSection = false;
-  const daysWithPunches = new Set();
+  let headerRow = null;
+  let statusColIndex = -1;
   
-  // Parse the data
-  for (let i = 0; i < rows.length; i++) {
+  // First pass: find headers and identify columns
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
     const row = rows[i];
-    if (!row || row.length === 0) continue;
-
-    const firstCol = String(row[0] || '').trim().toLowerCase();
+    if (!row) continue;
     
-    // Look for employee code
-    if (firstCol.includes('emp code')) {
-      empCode = String(row[1] || '').trim();
-      if (empCode) {
-        empName = String(row[3] || `Employee ${empCode}`).trim();
-        currentEmployee = {
-          code: empCode,
-          name: empName,
-          stats: { present: 0, absent: 0, leave: 0, weeklyOff: 0, total: 0 },
-          daysWorked: new Set()
-        };
-        employees[empCode] = currentEmployee;
-      }
-    }
+    const firstCell = String(row[0] || '').trim().toLowerCase();
     
-    // Look for data section (Att. Date or similar)
-    if (firstCol.includes('att.') || firstCol.includes('date') || firstCol.includes('intime')) {
-      inDataSection = true;
-      continue;
-    }
-    
-    // Parse attendance rows
-    if (inDataSection && currentEmployee && row.length > 2) {
-      const dateStr = String(row[0] || '').trim();
-      const inTime = String(row[1] || '').trim();
-      const outTime = String(row[2] || '').trim();
-      const status = String(row[row.length - 1] || '').trim();
-      
-      // Check if this is a valid data row
-      if (dateStr && dateStr.match(/\d/)) {
-        // If there's punch data (inTime or outTime has values)
-        if ((inTime && inTime !== '00:00' && inTime !== '') || (outTime && outTime !== '00:00' && outTime !== '')) {
-          currentEmployee.daysWorked.add(dateStr);
-          currentEmployee.stats.present++;
-          overallStats.presentDays++;
-        } else if (status.includes('Absent')) {
-          currentEmployee.stats.absent++;
-          overallStats.absentDays++;
-        } else if (status.includes('Leave')) {
-          currentEmployee.stats.leave++;
-          overallStats.leaves++;
-        } else if (status.includes('WeeklyOff') || status.includes('Weekly Off')) {
-          currentEmployee.stats.weeklyOff++;
-          overallStats.weeklyOff++;
+    // Look for header row
+    if (firstCell.includes('date') || firstCell.includes('att') || firstCell.includes('all')) {
+      headerRow = i;
+      // Find status column
+      for (let j = 0; j < row.length; j++) {
+        if (String(row[j] || '').trim().toLowerCase().includes('status')) {
+          statusColIndex = j;
+          break;
         }
-        currentEmployee.stats.total++;
       }
-    }
-    
-    // End of employee section
-    if (firstCol.includes('total') && currentEmployee) {
-      inDataSection = false;
+      break;
     }
   }
   
-  // Recalculate totals
-  Object.values(employees).forEach(emp => {
-    emp.stats.total = emp.stats.present + emp.stats.absent + emp.stats.leave + emp.stats.weeklyOff;
-  });
+  if (headerRow === null) {
+    console.error('Could not find header row');
+    return { employees, overallStats };
+  }
+  
+  // Second pass: parse employee and attendance data
+  let lastEmpCode = null;
+  let lastEmpName = null;
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 2) continue;
+    
+    const col0 = String(row[0] || '').trim();
+    const col1 = String(row[1] || '').trim();
+    
+    // Check if this is an employee header row (code and name)
+    if (col0 && col0.match(/^\d+$/) && col1 && col1.match(/^[A-Za-z]/)) {
+      lastEmpCode = col0;
+      lastEmpName = col1;
+      
+      if (!employees[lastEmpCode]) {
+        employees[lastEmpCode] = {
+          code: lastEmpCode,
+          name: lastEmpName,
+          stats: { present: 0, absent: 0, leave: 0, weeklyOff: 0, total: 0 }
+        };
+      }
+      currentEmployee = employees[lastEmpCode];
+      continue;
+    }
+    
+    // Skip header and separator rows
+    if (i <= headerRow || col0.toLowerCase().includes('date') || col0.toLowerCase().includes('total')) {
+      continue;
+    }
+    
+    // Parse attendance data
+    if (currentEmployee && col0.match(/\d{1,2}-\w{3}-\d{4}/)) {
+      // This is an attendance record
+      const hasInTime = row[1] && String(row[1]).trim() !== '00:00' && String(row[1]).trim() !== '';
+      const hasOutTime = row[2] && String(row[2]).trim() !== '00:00' && String(row[2]).trim() !== '';
+      const status = statusColIndex >= 0 && row[statusColIndex] ? String(row[statusColIndex]).trim() : '';
+      
+      currentEmployee.stats.total++;
+      
+      if (hasInTime || hasOutTime) {
+        // Has punch records
+        currentEmployee.stats.present++;
+        overallStats.presentDays++;
+      } else if (status.includes('Absent')) {
+        currentEmployee.stats.absent++;
+        overallStats.absentDays++;
+      } else if (status.includes('Leave')) {
+        currentEmployee.stats.leave++;
+        overallStats.leaves++;
+      } else if (status.includes('WeeklyOff') || status.includes('Weekly Off')) {
+        currentEmployee.stats.weeklyOff++;
+        overallStats.weeklyOff++;
+      } else {
+        // No punch and no explicit status = absent
+        currentEmployee.stats.absent++;
+        overallStats.absentDays++;
+      }
+    }
+  }
   
   overallStats.totalDays = overallStats.presentDays + overallStats.absentDays + overallStats.leaves + overallStats.weeklyOff;
   
