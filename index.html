@@ -223,6 +223,18 @@
       margin-bottom: 20px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
+
+    .debug-box {
+      background: #f0f0f0;
+      padding: 12px;
+      border-radius: 6px;
+      margin: 12px 0;
+      font-size: 12px;
+      font-family: monospace;
+      max-height: 200px;
+      overflow-y: auto;
+      color: #333;
+    }
   </style>
 </head>
 <body>
@@ -245,6 +257,8 @@
     <div class="spinner"></div>
     <p style="margin-top: 16px; color: #7f8c8d; font-weight: 500;">Processing your file...</p>
   </div>
+
+  <div id="debug" class="debug-box" style="display: none;"></div>
 
   <div class="results" id="results">
     <div class="section-box">
@@ -271,6 +285,7 @@ const error = document.getElementById('error');
 const success = document.getElementById('success');
 const loading = document.getElementById('loading');
 const results = document.getElementById('results');
+const debugBox = document.getElementById('debug');
 
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -284,6 +299,12 @@ dropZone.addEventListener('drop', (e) => {
   }
 });
 fileInput.addEventListener('change', processFile);
+
+function log(msg) {
+  debugBox.textContent += msg + '\n';
+  debugBox.scrollTop = debugBox.scrollHeight;
+  console.log(msg);
+}
 
 function showError(msg) {
   error.textContent = msg;
@@ -303,6 +324,8 @@ function processFile() {
   success.style.display = 'none';
   loading.style.display = 'block';
   results.style.display = 'none';
+  debugBox.textContent = '';
+  debugBox.style.display = 'block';
   
   const file = fileInput.files[0];
   if (!file) return;
@@ -310,120 +333,114 @@ function processFile() {
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
+      log('File loaded, parsing...');
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type: 'array' });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const sheetName = workbook.SheetNames[0];
+      log('Sheet name: ' + sheetName);
+      
+      const sheet = workbook.Sheets[sheetName];
       const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
       
-      const attendanceData = parseAttendanceFromPunches(json);
+      log('Total rows: ' + json.length);
+      log('First 10 rows:');
+      for (let i = 0; i < Math.min(10, json.length); i++) {
+        log('Row ' + i + ': ' + JSON.stringify(json[i]));
+      }
+      
+      const attendanceData = parseAttendanceData(json);
+      log('Employees found: ' + Object.keys(attendanceData.employees).length);
+      
       if (Object.keys(attendanceData.employees).length === 0) {
-        showError('No employee data found. Please check your Excel file format.');
+        showError('No employee data found. Check the debug info above to see your file structure.');
       } else {
         displayResults(attendanceData);
         showSuccess('✅ File processed! ' + Object.keys(attendanceData.employees).length + ' employees found.');
       }
     } catch (err) {
+      log('ERROR: ' + err.message);
       showError('Error: ' + err.message);
-      console.error(err);
     }
     loading.style.display = 'none';
   };
   reader.readAsArrayBuffer(file);
 }
 
-function parseAttendanceFromPunches(rows) {
+function parseAttendanceData(rows) {
   const employees = {};
   const overallStats = { totalDays: 0, presentDays: 0, absentDays: 0, leaves: 0, weeklyOff: 0 };
   
   let currentEmployee = null;
-  let headerRow = null;
-  let statusColIndex = -1;
-  
-  // First pass: find headers and identify columns
-  for (let i = 0; i < Math.min(rows.length, 20); i++) {
-    const row = rows[i];
-    if (!row) continue;
-    
-    const firstCell = String(row[0] || '').trim().toLowerCase();
-    
-    // Look for header row
-    if (firstCell.includes('date') || firstCell.includes('att') || firstCell.includes('all')) {
-      headerRow = i;
-      // Find status column
-      for (let j = 0; j < row.length; j++) {
-        if (String(row[j] || '').trim().toLowerCase().includes('status')) {
-          statusColIndex = j;
-          break;
-        }
-      }
-      break;
-    }
-  }
-  
-  if (headerRow === null) {
-    console.error('Could not find header row');
-    return { employees, overallStats };
-  }
-  
-  // Second pass: parse employee and attendance data
-  let lastEmpCode = null;
-  let lastEmpName = null;
+  let inDataSection = false;
   
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length < 2) continue;
-    
+
     const col0 = String(row[0] || '').trim();
     const col1 = String(row[1] || '').trim();
+    const col2 = String(row[2] || '').trim();
     
-    // Check if this is an employee header row (code and name)
-    if (col0 && col0.match(/^\d+$/) && col1 && col1.match(/^[A-Za-z]/)) {
-      lastEmpCode = col0;
-      lastEmpName = col1;
+    log('Row ' + i + ' - Col0: "' + col0 + '", Col1: "' + col1 + '", Col2: "' + col2 + '"');
+    
+    // Check if row contains employee code (numeric) and name
+    if (col0 && col0.match(/^\d+$/) && col1 && col1.length > 2) {
+      log('Found employee: Code=' + col0 + ', Name=' + col1);
+      currentEmployee = {
+        code: col0,
+        name: col1,
+        stats: { present: 0, absent: 0, leave: 0, weeklyOff: 0, total: 0 }
+      };
+      employees[col0] = currentEmployee;
+      inDataSection = false;
+      continue;
+    }
+    
+    // Look for Att. Date header
+    if (col0.toLowerCase().includes('att') || col0.toLowerCase().includes('date')) {
+      log('Found date header at row ' + i);
+      inDataSection = true;
+      continue;
+    }
+    
+    // Parse attendance rows
+    if (inDataSection && currentEmployee && col0.match(/\d{1,2}-\w{3}-\d{4}/)) {
+      // Date format like 01-Jul-2026
+      const inTime = col1;
+      const outTime = col2;
+      const status = row[row.length - 1] ? String(row[row.length - 1]).trim() : '';
       
-      if (!employees[lastEmpCode]) {
-        employees[lastEmpCode] = {
-          code: lastEmpCode,
-          name: lastEmpName,
-          stats: { present: 0, absent: 0, leave: 0, weeklyOff: 0, total: 0 }
-        };
-      }
-      currentEmployee = employees[lastEmpCode];
-      continue;
-    }
-    
-    // Skip header and separator rows
-    if (i <= headerRow || col0.toLowerCase().includes('date') || col0.toLowerCase().includes('total')) {
-      continue;
-    }
-    
-    // Parse attendance data
-    if (currentEmployee && col0.match(/\d{1,2}-\w{3}-\d{4}/)) {
-      // This is an attendance record
-      const hasInTime = row[1] && String(row[1]).trim() !== '00:00' && String(row[1]).trim() !== '';
-      const hasOutTime = row[2] && String(row[2]).trim() !== '00:00' && String(row[2]).trim() !== '';
-      const status = statusColIndex >= 0 && row[statusColIndex] ? String(row[statusColIndex]).trim() : '';
+      log('Attendance: Date=' + col0 + ', InTime=' + inTime + ', OutTime=' + outTime + ', Status=' + status);
       
       currentEmployee.stats.total++;
       
-      if (hasInTime || hasOutTime) {
-        // Has punch records
+      if ((inTime && inTime !== '00:00' && inTime !== '') || (outTime && outTime !== '00:00' && outTime !== '')) {
         currentEmployee.stats.present++;
         overallStats.presentDays++;
+        log('  → Counted as PRESENT (has punch)');
       } else if (status.includes('Absent')) {
         currentEmployee.stats.absent++;
         overallStats.absentDays++;
+        log('  → Counted as ABSENT (status)');
       } else if (status.includes('Leave')) {
         currentEmployee.stats.leave++;
         overallStats.leaves++;
-      } else if (status.includes('WeeklyOff') || status.includes('Weekly Off')) {
+        log('  → Counted as LEAVE (status)');
+      } else if (status.includes('WeeklyOff') || status.includes('Weekly')) {
         currentEmployee.stats.weeklyOff++;
         overallStats.weeklyOff++;
+        log('  → Counted as WEEKLY OFF (status)');
       } else {
-        // No punch and no explicit status = absent
         currentEmployee.stats.absent++;
         overallStats.absentDays++;
+        log('  → Counted as ABSENT (no punch, no status)');
       }
+    }
+    
+    // End of employee section
+    if (col0.toLowerCase().includes('total') && currentEmployee) {
+      log('Found total row, ending employee section');
+      inDataSection = false;
     }
   }
   
@@ -466,43 +483,39 @@ function displayResults(data) {
   const employeeDetails = document.getElementById('employeeDetails');
   const empList = Object.values(employees).sort((a, b) => a.name.localeCompare(b.name));
   
-  if (empList.length === 0) {
-    employeeDetails.innerHTML = '<p style="color: #7f8c8d; text-align: center; padding: 20px;">No employee data found</p>';
-  } else {
-    employeeDetails.innerHTML = empList.map(emp => {
-      const attendance = emp.stats.total > 0 ? Math.round((emp.stats.present / emp.stats.total) * 100) : 0;
-      const badgeClass = attendance >= 75 ? 'attendance-high' : 'attendance-low';
-      return `
-        <div class="employee-card">
-          <div class="employee-header">
-            <div>
-              <div class="employee-name">${emp.name}</div>
-              <div class="employee-code">Code: ${emp.code}</div>
-            </div>
-            <div class="attendance-badge ${badgeClass}">${attendance}%</div>
+  employeeDetails.innerHTML = empList.map(emp => {
+    const attendance = emp.stats.total > 0 ? Math.round((emp.stats.present / emp.stats.total) * 100) : 0;
+    const badgeClass = attendance >= 75 ? 'attendance-high' : 'attendance-low';
+    return `
+      <div class="employee-card">
+        <div class="employee-header">
+          <div>
+            <div class="employee-name">${emp.name}</div>
+            <div class="employee-code">Code: ${emp.code}</div>
           </div>
-          <div class="employee-stats">
-            <div class="employee-stat">
-              <div class="stat-label">Present</div>
-              <div class="stat-value stat-present">${emp.stats.present}</div>
-            </div>
-            <div class="employee-stat">
-              <div class="stat-label">Absent</div>
-              <div class="stat-value stat-absent">${emp.stats.absent}</div>
-            </div>
-            <div class="employee-stat">
-              <div class="stat-label">Leave</div>
-              <div class="stat-value">${emp.stats.leave}</div>
-            </div>
-            <div class="employee-stat">
-              <div class="stat-label">Weekly Off</div>
-              <div class="stat-value">${emp.stats.weeklyOff}</div>
-            </div>
+          <div class="attendance-badge ${badgeClass}">${attendance}%</div>
+        </div>
+        <div class="employee-stats">
+          <div class="employee-stat">
+            <div class="stat-label">Present</div>
+            <div class="stat-value stat-present">${emp.stats.present}</div>
+          </div>
+          <div class="employee-stat">
+            <div class="stat-label">Absent</div>
+            <div class="stat-value stat-absent">${emp.stats.absent}</div>
+          </div>
+          <div class="employee-stat">
+            <div class="stat-label">Leave</div>
+            <div class="stat-value">${emp.stats.leave}</div>
+          </div>
+          <div class="employee-stat">
+            <div class="stat-label">Weekly Off</div>
+            <div class="stat-value">${emp.stats.weeklyOff}</div>
           </div>
         </div>
-      `;
-    }).join('');
-  }
+      </div>
+    `;
+  }).join('');
 
   results.style.display = 'block';
   dropZone.style.display = 'none';
