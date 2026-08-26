@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Attendance Calculator</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
@@ -12,7 +12,7 @@
       background: #f5f5f5;
       padding: 20px;
     }
-    .container { max-width: 900px; margin: 0 auto; }
+    .container { max-width: 1000px; margin: 0 auto; }
     
     .header {
       background: white;
@@ -36,15 +36,8 @@
       transition: all 0.3s;
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .upload-section:hover { 
-      background: #ecf0f1; 
-      border-color: #2980b9; 
-    }
-    .upload-section.dragover { 
-      background: #e8f4f8; 
-      border-color: #2980b9; 
-      transform: scale(1.02);
-    }
+    .upload-section:hover { background: #ecf0f1; border-color: #2980b9; }
+    .upload-section.dragover { background: #e8f4f8; border-color: #2980b9; transform: scale(1.02); }
     .upload-section input { display: none; }
     .upload-icon { font-size: 48px; margin-bottom: 12px; }
     .upload-label { font-size: 18px; color: #2c3e50; font-weight: 600; margin-bottom: 8px; }
@@ -78,7 +71,6 @@
       color: #2c3e50; 
     }
     
-    .employee-list { display: none; }
     .employee-card { 
       background: white; 
       border: 1px solid #ecf0f1; 
@@ -86,9 +78,7 @@
       padding: 16px; 
       margin-bottom: 12px;
       box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-      transition: all 0.2s;
     }
-    .employee-card:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
     
     .employee-header { 
       display: flex; 
@@ -170,7 +160,6 @@
       transform: translateY(-2px);
       box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
     }
-    button:active { transform: translateY(0); }
     
     .btn-secondary { 
       background: white; 
@@ -190,6 +179,7 @@
       margin-bottom: 12px;
       border-left: 4px solid #c0392b;
     }
+    
     .success {
       color: #27ae60;
       padding: 14px;
@@ -218,18 +208,6 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     
-    .toggle-btn { 
-      background: white; 
-      border: 1px solid #ecf0f1; 
-      color: #2c3e50; 
-      padding: 8px 16px; 
-      font-size: 13px; 
-      margin-top: 12px;
-    }
-    .toggle-btn:hover { 
-      background: #ecf0f1; 
-    }
-    
     .section-title {
       font-size: 20px;
       font-weight: 600;
@@ -252,7 +230,7 @@
 <div class="container">
   <div class="header">
     <h1>📊 Attendance Calculator</h1>
-    <p>Upload your raw Excel attendance report to automatically calculate and view summary statistics</p>
+    <p>Upload your Excel attendance report to automatically calculate attendance from punch records</p>
   </div>
 
   <div class="upload-section" id="dropZone">
@@ -271,18 +249,13 @@
 
   <div class="results" id="results">
     <div class="section-box">
-      <div class="section-title">Overall Summary</div>
+      <div class="section-title">📈 Overall Summary</div>
       <div class="summary-grid" id="summaryGrid"></div>
     </div>
 
-    <div class="employee-list" id="employeeList">
-      <div class="section-box">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <div class="section-title" style="margin: 0; border: none; padding: 0;">Employee Details</div>
-          <button class="toggle-btn" id="toggleDetails">Show Details</button>
-        </div>
-        <div id="employeeDetails"></div>
-      </div>
+    <div class="section-box" id="employeeList">
+      <div class="section-title">👥 Employee Details</div>
+      <div id="employeeDetails"></div>
     </div>
 
     <div class="button-group">
@@ -301,16 +274,8 @@ const loading = document.getElementById('loading');
 const results = document.getElementById('results');
 
 dropZone.addEventListener('click', () => fileInput.click());
-
-dropZone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropZone.classList.add('dragover');
-});
-
-dropZone.addEventListener('dragleave', () => {
-  dropZone.classList.remove('dragover');
-});
-
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('dragover'); });
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
@@ -319,7 +284,6 @@ dropZone.addEventListener('drop', (e) => {
     processFile();
   }
 });
-
 fileInput.addEventListener('change', processFile);
 
 function showError(msg) {
@@ -352,71 +316,100 @@ function processFile() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
       
-      const attendanceData = parseAttendanceData(json);
-      displayResults(attendanceData);
-      showSuccess('✓ File processed successfully!');
+      const attendanceData = parseAttendanceFromPunches(json);
+      if (attendanceData.totalDays === 0) {
+        showError('No attendance data found. Make sure your Excel has employee names and punch records.');
+      } else {
+        displayResults(attendanceData);
+        showSuccess('✅ File processed successfully! ' + Object.keys(attendanceData.employees).length + ' employees found.');
+      }
     } catch (err) {
-      showError('❌ Error processing file: ' + err.message);
+      showError('Error: ' + err.message);
     }
     loading.style.display = 'none';
   };
   reader.readAsArrayBuffer(file);
 }
 
-function parseAttendanceData(rows) {
+function parseAttendanceFromPunches(rows) {
   const employees = {};
-  const overallStats = { totalDays: 0, presentDays: 0, absentDays: 0, leaves: 0, weeklyOff: 0, holidays: 0 };
+  const overallStats = { totalDays: 0, presentDays: 0, absentDays: 0, leaves: 0, weeklyOff: 0 };
   
   let currentEmployee = null;
-  let isDataSection = false;
-
+  let empCode = null;
+  let empName = null;
+  let inDataSection = false;
+  const daysWithPunches = new Set();
+  
+  // Parse the data
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length === 0) continue;
 
     const firstCol = String(row[0] || '').trim().toLowerCase();
     
-    if (firstCol.includes('emp code') && i + 1 < rows.length) {
-      const nextRow = rows[i + 1];
-      if (nextRow && nextRow[4]) {
-        const empCode = String(nextRow[4]).trim();
-        const empName = nextRow[6] || `Employee ${empCode}`;
-        currentEmployee = { code: empCode, name: empName, stats: { present: 0, absent: 0, leave: 0, weeklyOff: 0, holiday: 0, total: 0 } };
+    // Look for employee code
+    if (firstCol.includes('emp code')) {
+      empCode = String(row[1] || '').trim();
+      if (empCode) {
+        empName = String(row[3] || `Employee ${empCode}`).trim();
+        currentEmployee = {
+          code: empCode,
+          name: empName,
+          stats: { present: 0, absent: 0, leave: 0, weeklyOff: 0, total: 0 },
+          daysWorked: new Set()
+        };
         employees[empCode] = currentEmployee;
       }
     }
-
-    if (firstCol.includes('att. date') || firstCol.includes('att.date')) {
-      isDataSection = true;
+    
+    // Look for data section (Att. Date or similar)
+    if (firstCol.includes('att.') || firstCol.includes('date') || firstCol.includes('intime')) {
+      inDataSection = true;
       continue;
     }
-
-    if (isDataSection && currentEmployee && row[3] && row[12]) {
-      const status = String(row[12]).trim();
-      currentEmployee.stats.total++;
+    
+    // Parse attendance rows
+    if (inDataSection && currentEmployee && row.length > 2) {
+      const dateStr = String(row[0] || '').trim();
+      const inTime = String(row[1] || '').trim();
+      const outTime = String(row[2] || '').trim();
+      const status = String(row[row.length - 1] || '').trim();
       
-      if (status === 'Present') {
-        currentEmployee.stats.present++;
-        overallStats.presentDays++;
-      } else if (status === 'Absent') {
-        currentEmployee.stats.absent++;
-        overallStats.absentDays++;
-      } else if (status === 'WeeklyOff') {
-        currentEmployee.stats.weeklyOff++;
-        overallStats.weeklyOff++;
-      } else if (status.includes('Leave') || status === 'Leave') {
-        currentEmployee.stats.leave++;
-        overallStats.leaves++;
+      // Check if this is a valid data row
+      if (dateStr && dateStr.match(/\d/)) {
+        // If there's punch data (inTime or outTime has values)
+        if ((inTime && inTime !== '00:00' && inTime !== '') || (outTime && outTime !== '00:00' && outTime !== '')) {
+          currentEmployee.daysWorked.add(dateStr);
+          currentEmployee.stats.present++;
+          overallStats.presentDays++;
+        } else if (status.includes('Absent')) {
+          currentEmployee.stats.absent++;
+          overallStats.absentDays++;
+        } else if (status.includes('Leave')) {
+          currentEmployee.stats.leave++;
+          overallStats.leaves++;
+        } else if (status.includes('WeeklyOff') || status.includes('Weekly Off')) {
+          currentEmployee.stats.weeklyOff++;
+          overallStats.weeklyOff++;
+        }
+        currentEmployee.stats.total++;
       }
     }
-
-    if (firstCol.includes('total duration') && currentEmployee) {
-      isDataSection = false;
+    
+    // End of employee section
+    if (firstCol.includes('total') && currentEmployee) {
+      inDataSection = false;
     }
   }
-
+  
+  // Recalculate totals
+  Object.values(employees).forEach(emp => {
+    emp.stats.total = emp.stats.present + emp.stats.absent + emp.stats.leave + emp.stats.weeklyOff;
+  });
+  
   overallStats.totalDays = overallStats.presentDays + overallStats.absentDays + overallStats.leaves + overallStats.weeklyOff;
-
+  
   return { employees, overallStats };
 }
 
@@ -455,7 +448,7 @@ function displayResults(data) {
   const empList = Object.values(employees).sort((a, b) => a.name.localeCompare(b.name));
   
   if (empList.length === 0) {
-    employeeDetails.innerHTML = '<p style="color: #7f8c8d; text-align: center; padding: 20px;">No employee data found in file</p>';
+    employeeDetails.innerHTML = '<p style="color: #7f8c8d; text-align: center; padding: 20px;">No employee data found</p>';
   } else {
     employeeDetails.innerHTML = empList.map(emp => {
       const attendance = emp.stats.total > 0 ? Math.round((emp.stats.present / emp.stats.total) * 100) : 0;
@@ -465,7 +458,7 @@ function displayResults(data) {
           <div class="employee-header">
             <div>
               <div class="employee-name">${emp.name}</div>
-              <div class="employee-code">Employee Code: ${emp.code}</div>
+              <div class="employee-code">Code: ${emp.code}</div>
             </div>
             <div class="attendance-badge ${badgeClass}">${attendance}%</div>
           </div>
@@ -494,17 +487,6 @@ function displayResults(data) {
 
   results.style.display = 'block';
   dropZone.style.display = 'none';
-
-  document.getElementById('toggleDetails').addEventListener('click', function() {
-    const details = document.getElementById('employeeDetails');
-    if (details.style.display === 'none') {
-      details.style.display = 'block';
-      this.textContent = 'Hide Details';
-    } else {
-      details.style.display = 'none';
-      this.textContent = 'Show Details';
-    }
-  });
 
   document.getElementById('downloadBtn').addEventListener('click', () => {
     downloadReport(data);
@@ -535,8 +517,6 @@ function downloadReport(data) {
   });
 
   const ws = XLSX.utils.aoa_to_sheet(ws_data);
-  ws['!cols'] = [{wch: 25}, {wch: 15}, {wch: 10}, {wch: 10}, {wch: 10}, {wch: 12}, {wch: 12}, {wch: 15}];
-  
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Attendance Report');
   XLSX.writeFile(wb, `Attendance_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
